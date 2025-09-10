@@ -268,7 +268,6 @@ func cloneRepoToTemp(ctx context.Context, repoURL string, branch string) (string
 
 	// clone the repository with minimal settings
 	cmd := exec.CommandContext(ctx, "git", args...)
-
 	if err := cmd.Run(); err != nil {
 		// clean up the temp directory on failure
 		_ = os.RemoveAll(tempDir)

@@ -181,11 +181,11 @@ func (o *options) validateOpenRouter() error {
 
 func (o *options) validateAnthropic() error {
 	if o.Providers.Anthropic.ApiKey == "" {
-		return errors.New("Anthropic API key is required") 
+		return errors.New("Anthropic API key is required")
 	}
 
 	if o.Providers.Anthropic.ModelName == "" {
-		return errors.New("Anthropic model name is required") 
+		return errors.New("Anthropic model name is required")
 	}
 
 	return nil
