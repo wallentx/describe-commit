@@ -147,6 +147,12 @@ func NewApp(name string) *App { //nolint:funlen
 			EnvVars: []string{"REPO_URL"},
 			Default: app.opt.RepoURL,
 		}
+		branch = cmd.Flag[string]{
+			Names:   []string{"branch", "b"},
+			Usage:   "Git branch to use when cloning repository (used with --repo)",
+			EnvVars: []string{"BRANCH"},
+			Default: app.opt.Branch,
+		}
 	)
 
 	app.cmd.Flags = []cmd.Flagger{
@@ -166,6 +172,7 @@ func NewApp(name string) *App { //nolint:funlen
 		&anthropicModelName,
 		&commitHash,
 		&repoURL,
+		&branch,
 	}
 
 	app.cmd.Action = func(ctx context.Context, c *cmd.Command, args []string) error {
@@ -190,6 +197,7 @@ func NewApp(name string) *App { //nolint:funlen
 			setIfFlagIsSet(&app.opt.Providers.Anthropic.ModelName, anthropicModelName)
 			setIfFlagIsSet(&app.opt.CommitHash, commitHash)
 			setIfFlagIsSet(&app.opt.RepoURL, repoURL)
+			setIfFlagIsSet(&app.opt.Branch, branch)
 		}
 
 		if err := app.opt.Validate(); err != nil {
@@ -197,7 +205,7 @@ func NewApp(name string) *App { //nolint:funlen
 		}
 
 		// determine the working directory
-		var wd, wdErr = app.getWorkingDir(ctx, args, app.opt.RepoURL)
+		var wd, wdErr = app.getWorkingDir(ctx, args, app.opt.RepoURL, app.opt.Branch)
 		if wdErr != nil {
 			return fmt.Errorf("wrong working directory: %w", wdErr)
 		}
@@ -230,7 +238,7 @@ func setIfFlagIsSet[T cmd.FlagType](target *T, source cmd.Flag[T]) {
 }
 
 // cloneRepoToTemp clones a repository to a temporary directory with minimal checkout.
-func cloneRepoToTemp(ctx context.Context, repoURL string) (string, error) {
+func cloneRepoToTemp(ctx context.Context, repoURL string, branch string) (string, error) {
 	// create a temporary directory
 	tempDir, err := os.MkdirTemp("", "describe-commit-*")
 	if err != nil {
@@ -245,11 +253,21 @@ func cloneRepoToTemp(ctx context.Context, repoURL string) (string, error) {
 		fullURL = repoURL
 	}
 
-	// clone the repository with minimal settings
-	cmd := exec.CommandContext(ctx, "git", "clone",
+	// prepare git clone command arguments
+	args := []string{"clone",
 		"--depth", "50", // get enough commits for history
 		"--no-checkout", // don't checkout working tree
-		fullURL, tempDir)
+	}
+
+	// add branch specification if provided
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+
+	args = append(args, fullURL, tempDir)
+
+	// clone the repository with minimal settings
+	cmd := exec.CommandContext(ctx, "git", args...)
 
 	if err := cmd.Run(); err != nil {
 		// clean up the temp directory on failure
@@ -258,16 +276,20 @@ func cloneRepoToTemp(ctx context.Context, repoURL string) (string, error) {
 		return "", fmt.Errorf("failed to clone repository %s: %w", repoURL, err)
 	}
 
-	debug.Printf("cloned repository %s to temporary directory: %s", repoURL, tempDir)
+	if branch != "" {
+		debug.Printf("cloned repository %s (branch: %s) to temporary directory: %s", repoURL, branch, tempDir)
+	} else {
+		debug.Printf("cloned repository %s to temporary directory: %s", repoURL, tempDir)
+	}
 
 	return tempDir, nil
 }
 
 // getWorkingDir returns the working directory to use for the application.
-func (*App) getWorkingDir(ctx context.Context, args []string, repoURL string) (string, error) {
+func (*App) getWorkingDir(ctx context.Context, args []string, repoURL string, branch string) (string, error) {
 	// if repo URL is provided, clone it to a temporary directory
 	if repoURL != "" {
-		return cloneRepoToTemp(ctx, repoURL)
+		return cloneRepoToTemp(ctx, repoURL, branch)
 	}
 
 	var dir string

@@ -19,6 +19,7 @@ type options struct {
 	AIProviderName      string
 	CommitHash          string
 	RepoURL             string
+	Branch              string
 
 	Providers struct {
 		Gemini     struct{ ApiKey, ModelName string }
@@ -75,6 +76,7 @@ func (o *options) UpdateFromConfigFile(filePath []string) error {
 	setIfSourceNotNil(&o.AIProviderName, cfg.AIProviderName)
 	setIfSourceNotNil(&o.CommitHash, cfg.CommitHash)
 	setIfSourceNotNil(&o.RepoURL, cfg.RepoURL)
+	setIfSourceNotNil(&o.Branch, cfg.Branch)
 
 	if sub := cfg.Gemini; sub != nil {
 		setIfSourceNotNil(&o.Providers.Gemini.ApiKey, sub.ApiKey)

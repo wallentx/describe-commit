@@ -39,6 +39,11 @@ aiProvider: gemini
 # @type {string}
 #repoURL: owner/repository-name
 
+# Git branch to use when cloning repository (used with repoURL)
+# If not specified, the default branch will be used
+# @type {string}
+#branch: main
+
 # Gemini provider configuration
 gemini:
   # Gemini API key (issue your own at https://bit.ly/4jZhiKI, as of February 2025 it's free)
