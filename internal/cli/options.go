@@ -73,6 +73,8 @@ func (o *options) UpdateFromConfigFile(filePath []string) error {
 	setIfSourceNotNil(&o.EnableEmoji, cfg.EnableEmoji)
 	setIfSourceNotNil(&o.MaxOutputTokens, cfg.MaxOutputTokens)
 	setIfSourceNotNil(&o.AIProviderName, cfg.AIProviderName)
+	setIfSourceNotNil(&o.CommitHash, cfg.CommitHash)
+	setIfSourceNotNil(&o.RepoURL, cfg.RepoURL)
 
 	if sub := cfg.Gemini; sub != nil {
 		setIfSourceNotNil(&o.Providers.Gemini.ApiKey, sub.ApiKey)
