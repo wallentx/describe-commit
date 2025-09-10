@@ -17,6 +17,8 @@ type options struct {
 	EnableEmoji         bool
 	MaxOutputTokens     int64
 	AIProviderName      string
+	CommitHash          string
+	RepoURL             string
 
 	Providers struct {
 		Gemini     struct{ ApiKey, ModelName string }
@@ -113,44 +115,73 @@ func (o *options) Validate() error {
 		return fmt.Errorf("unsupported AI provider: %s", v)
 	}
 
-	if o.AIProviderName == ai.ProviderGemini {
-		if o.Providers.Gemini.ApiKey == "" {
-			return errors.New("gemini API key is required")
-		}
-
-		if o.Providers.Gemini.ModelName == "" {
-			return errors.New("gemini model name is required")
-		}
+	// If repo URL is provided, commit hash must also be provided
+	if o.RepoURL != "" && o.CommitHash == "" {
+		return errors.New("commit hash must be provided when using --repo option")
 	}
 
-	if o.AIProviderName == ai.ProviderOpenAI {
-		if o.Providers.OpenAI.ApiKey == "" {
-			return errors.New("OpenAI API key is required")
-		}
+	return o.validateProviderCredentials()
+}
 
-		if o.Providers.OpenAI.ModelName == "" {
-			return errors.New("OpenAI model name is required")
-		}
+// validateProviderCredentials validates the API keys and model names for the selected provider.
+func (o *options) validateProviderCredentials() error {
+	switch o.AIProviderName {
+	case ai.ProviderGemini:
+		return o.validateGemini()
+	case ai.ProviderOpenAI:
+		return o.validateOpenAI()
+	case ai.ProviderOpenRouter:
+		return o.validateOpenRouter()
+	case ai.ProviderAnthropic:
+		return o.validateAnthropic()
+	default:
+		return fmt.Errorf("unsupported AI provider: %s", o.AIProviderName)
+	}
+}
+
+func (o *options) validateGemini() error {
+	if o.Providers.Gemini.ApiKey == "" {
+		return errors.New("gemini API key is required")
 	}
 
-	if o.AIProviderName == ai.ProviderOpenRouter {
-		if o.Providers.OpenRouter.ApiKey == "" {
-			return errors.New("OpenRouter API key is required")
-		}
-
-		if o.Providers.OpenRouter.ModelName == "" {
-			return errors.New("OpenRouter model name is required")
-		}
+	if o.Providers.Gemini.ModelName == "" {
+		return errors.New("gemini model name is required")
 	}
 
-	if o.AIProviderName == ai.ProviderAnthropic {
-		if o.Providers.Anthropic.ApiKey == "" {
-			return errors.New("Anthropic API key is required") //nolint:staticcheck
-		}
+	return nil
+}
 
-		if o.Providers.Anthropic.ModelName == "" {
-			return errors.New("Anthropic model name is required") //nolint:staticcheck
-		}
+func (o *options) validateOpenAI() error {
+	if o.Providers.OpenAI.ApiKey == "" {
+		return errors.New("OpenAI API key is required")
+	}
+
+	if o.Providers.OpenAI.ModelName == "" {
+		return errors.New("OpenAI model name is required")
+	}
+
+	return nil
+}
+
+func (o *options) validateOpenRouter() error {
+	if o.Providers.OpenRouter.ApiKey == "" {
+		return errors.New("OpenRouter API key is required")
+	}
+
+	if o.Providers.OpenRouter.ModelName == "" {
+		return errors.New("OpenRouter model name is required")
+	}
+
+	return nil
+}
+
+func (o *options) validateAnthropic() error {
+	if o.Providers.Anthropic.ApiKey == "" {
+		return errors.New("Anthropic API key is required") //nolint:staticcheck
+	}
+
+	if o.Providers.Anthropic.ModelName == "" {
+		return errors.New("Anthropic model name is required") //nolint:staticcheck
 	}
 
 	return nil
