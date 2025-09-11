@@ -285,6 +285,75 @@ func cloneRepoToTemp(ctx context.Context, repoURL string, branch string) (string
 	return tempDir, nil
 }
 
+// ensureCommitAvailable ensures a specific commit is available in the repository.
+// If the commit is not found, it attempts to fetch it from the remote.
+func ensureCommitAvailable(ctx context.Context, dirPath string, commitHash string) error {
+	// first check if the commit already exists
+	checkCmd := exec.CommandContext(ctx, "git", "cat-file", "-e", commitHash)
+	checkCmd.Dir = dirPath
+	checkCmd.Env = []string{
+		"LC_ALL=C", "LANG=C",
+		"NO_COLOR=1",
+		"GIT_CONFIG_NOSYSTEM=1",
+	}
+
+	if err := checkCmd.Run(); err == nil {
+		// commit already exists
+		debug.Printf("commit %s is available in repository", commitHash)
+
+		return nil
+	}
+
+	debug.Printf("commit %s not found, attempting to fetch from remote", commitHash)
+
+	// try to fetch the specific commit from origin
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", commitHash)
+	fetchCmd.Dir = dirPath
+	fetchCmd.Env = []string{
+		"LC_ALL=C", "LANG=C",
+		"NO_COLOR=1",
+		"GIT_CONFIG_NOSYSTEM=1",
+	}
+
+	if err := fetchCmd.Run(); err != nil {
+		debug.Printf("failed to fetch commit %s from origin: %v", commitHash, err)
+
+		// if that fails, try unshallowing the repository to get more history
+		unshallowCmd := exec.CommandContext(ctx, "git", "fetch", "--unshallow")
+		unshallowCmd.Dir = dirPath
+		unshallowCmd.Env = []string{
+			"LC_ALL=C", "LANG=C",
+			"NO_COLOR=1",
+			"GIT_CONFIG_NOSYSTEM=1",
+		}
+
+		if unshallowErr := unshallowCmd.Run(); unshallowErr != nil {
+			return fmt.Errorf("commit %s not found and could not fetch from remote: %w", commitHash, err)
+		}
+
+		debug.Printf("unshallowed repository to fetch more history")
+	} else {
+		debug.Printf("successfully fetched commit %s from origin", commitHash)
+	}
+
+	// verify the commit is now available
+	verifyCmd := exec.CommandContext(ctx, "git", "cat-file", "-e", commitHash)
+	verifyCmd.Dir = dirPath
+	verifyCmd.Env = []string{
+		"LC_ALL=C", "LANG=C",
+		"NO_COLOR=1",
+		"GIT_CONFIG_NOSYSTEM=1",
+	}
+
+	if err := verifyCmd.Run(); err != nil {
+		return fmt.Errorf("commit %s still not available after fetch attempts", commitHash)
+	}
+
+	debug.Printf("commit %s is now available in repository", commitHash)
+
+	return nil
+}
+
 // getWorkingDir returns the working directory to use for the application.
 func (*App) getWorkingDir(ctx context.Context, args []string, repoURL string, branch string) (string, error) {
 	// if repo URL is provided, clone it to a temporary directory
@@ -375,6 +444,13 @@ func (a *App) run(ctx context.Context, workingDir string, commitHash string) err
 	)
 
 	if commitHash != "" {
+		// If we're using a remote repository, ensure the commit is available
+		if a.opt.RepoURL != "" {
+			if err := ensureCommitAvailable(ctx, workingDir, commitHash); err != nil {
+				return fmt.Errorf("failed to ensure commit %s is available: %w", commitHash, err)
+			}
+		}
+
 		// Get changes for a specific commit
 		eg.Go(func(ctx context.Context) (err error) {
 			changes, err = git.CommitDiff(ctx, workingDir, commitHash)
