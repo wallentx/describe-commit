@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -134,6 +135,24 @@ func NewApp(name string) *App { //nolint:funlen
 			EnvVars: []string{"ANTHROPIC_MODEL_NAME"},
 			Default: app.opt.Providers.Anthropic.ModelName,
 		}
+		commitHash = cmd.Flag[string]{
+			Names:   []string{"commit-hash", "ch"},
+			Usage:   "Specific commit hash to describe (instead of staged changes)",
+			EnvVars: []string{"COMMIT_HASH"},
+			Default: app.opt.CommitHash,
+		}
+		repoURL = cmd.Flag[string]{
+			Names:   []string{"repo", "r"},
+			Usage:   "Repository URL in format 'owner/reponame' (requires --commit-hash)",
+			EnvVars: []string{"REPO_URL"},
+			Default: app.opt.RepoURL,
+		}
+		branch = cmd.Flag[string]{
+			Names:   []string{"branch", "b"},
+			Usage:   "Git branch to use when cloning repository (used with --repo)",
+			EnvVars: []string{"BRANCH"},
+			Default: app.opt.Branch,
+		}
 	)
 
 	app.cmd.Flags = []cmd.Flagger{
@@ -151,17 +170,14 @@ func NewApp(name string) *App { //nolint:funlen
 		&openRouterModelName,
 		&anthropicApiKey,
 		&anthropicModelName,
+		&commitHash,
+		&repoURL,
+		&branch,
 	}
 
 	app.cmd.Action = func(ctx context.Context, c *cmd.Command, args []string) error {
-		// determine the working directory
-		var wd, wdErr = app.getWorkingDir(args)
-		if wdErr != nil {
-			return fmt.Errorf("wrong working directory: %w", wdErr)
-		}
-
 		// update the options from the configuration file(s)
-		if err := app.opt.UpdateFromConfigFile(append([]string{*configFile.Value}, config.FindIn(wd)...)); err != nil {
+		if err := app.opt.UpdateFromConfigFile(append([]string{*configFile.Value}, config.FindIn(".")...)); err != nil {
 			return err
 		}
 
@@ -179,13 +195,34 @@ func NewApp(name string) *App { //nolint:funlen
 			setIfFlagIsSet(&app.opt.Providers.OpenRouter.ModelName, openRouterModelName)
 			setIfFlagIsSet(&app.opt.Providers.Anthropic.ApiKey, anthropicApiKey)
 			setIfFlagIsSet(&app.opt.Providers.Anthropic.ModelName, anthropicModelName)
+			setIfFlagIsSet(&app.opt.CommitHash, commitHash)
+			setIfFlagIsSet(&app.opt.RepoURL, repoURL)
+			setIfFlagIsSet(&app.opt.Branch, branch)
 		}
 
 		if err := app.opt.Validate(); err != nil {
 			return fmt.Errorf("invalid options: %w", err)
 		}
 
-		return app.run(ctx, wd)
+		// determine the working directory
+		var wd, wdErr = app.getWorkingDir(ctx, args, app.opt.RepoURL, app.opt.Branch)
+		if wdErr != nil {
+			return fmt.Errorf("wrong working directory: %w", wdErr)
+		}
+
+		// if repo URL was provided, we need to use a different config file search path
+		var configSearchDir = "."
+		if app.opt.RepoURL == "" {
+			configSearchDir = wd
+		}
+
+		// update the options from the configuration file(s) after we know the working directory
+		configFiles := append([]string{*configFile.Value}, config.FindIn(configSearchDir)...)
+		if err := app.opt.UpdateFromConfigFile(configFiles); err != nil {
+			return err
+		}
+
+		return app.run(ctx, wd, app.opt.CommitHash)
 	}
 
 	return &app
@@ -200,8 +237,130 @@ func setIfFlagIsSet[T cmd.FlagType](target *T, source cmd.Flag[T]) {
 	*target = *source.Value
 }
 
+// cloneRepoToTemp clones a repository to a temporary directory with minimal checkout.
+func cloneRepoToTemp(ctx context.Context, repoURL string, branch string) (string, error) {
+	// create a temporary directory
+	tempDir, err := os.MkdirTemp("", "describe-commit-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+
+	// convert owner/repo format to full GitHub URL if needed
+	var fullURL string
+	if strings.Contains(repoURL, "/") && !strings.HasPrefix(repoURL, "http") {
+		fullURL = "https://github.com/" + repoURL + ".git"
+	} else {
+		fullURL = repoURL
+	}
+
+	// prepare git clone command arguments
+	args := []string{"clone",
+		"--depth", "50", // get enough commits for history
+		"--no-checkout", // don't checkout working tree
+	}
+
+	// add branch specification if provided
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+
+	args = append(args, fullURL, tempDir)
+
+	// clone the repository with minimal settings
+	cmd := exec.CommandContext(ctx, "git", args...)
+
+	if err := cmd.Run(); err != nil {
+		// clean up the temp directory on failure
+		_ = os.RemoveAll(tempDir)
+
+		return "", fmt.Errorf("failed to clone repository %s: %w", repoURL, err)
+	}
+
+	if branch != "" {
+		debug.Printf("cloned repository %s (branch: %s) to temporary directory: %s", repoURL, branch, tempDir)
+	} else {
+		debug.Printf("cloned repository %s to temporary directory: %s", repoURL, tempDir)
+	}
+
+	return tempDir, nil
+}
+
+// ensureCommitAvailable ensures a specific commit is available in the repository.
+// If the commit is not found, it attempts to fetch it from the remote.
+func ensureCommitAvailable(ctx context.Context, dirPath string, commitHash string) error {
+	// first check if the commit already exists
+	checkCmd := exec.CommandContext(ctx, "git", "cat-file", "-e", commitHash)
+	checkCmd.Dir = dirPath
+	checkCmd.Env = []string{
+		"LC_ALL=C", "LANG=C",
+		"NO_COLOR=1",
+		"GIT_CONFIG_NOSYSTEM=1",
+	}
+
+	if err := checkCmd.Run(); err == nil {
+		// commit already exists
+		debug.Printf("commit %s is available in repository", commitHash)
+
+		return nil
+	}
+
+	debug.Printf("commit %s not found, attempting to fetch from remote", commitHash)
+
+	// try to fetch the specific commit from origin
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", commitHash)
+	fetchCmd.Dir = dirPath
+	fetchCmd.Env = []string{
+		"LC_ALL=C", "LANG=C",
+		"NO_COLOR=1",
+		"GIT_CONFIG_NOSYSTEM=1",
+	}
+
+	if err := fetchCmd.Run(); err != nil {
+		debug.Printf("failed to fetch commit %s from origin: %v", commitHash, err)
+
+		// if that fails, try unshallowing the repository to get more history
+		unshallowCmd := exec.CommandContext(ctx, "git", "fetch", "--unshallow")
+		unshallowCmd.Dir = dirPath
+		unshallowCmd.Env = []string{
+			"LC_ALL=C", "LANG=C",
+			"NO_COLOR=1",
+			"GIT_CONFIG_NOSYSTEM=1",
+		}
+
+		if unshallowErr := unshallowCmd.Run(); unshallowErr != nil {
+			return fmt.Errorf("commit %s not found and could not fetch from remote: %w", commitHash, err)
+		}
+
+		debug.Printf("unshallowed repository to fetch more history")
+	} else {
+		debug.Printf("successfully fetched commit %s from origin", commitHash)
+	}
+
+	// verify the commit is now available
+	verifyCmd := exec.CommandContext(ctx, "git", "cat-file", "-e", commitHash)
+	verifyCmd.Dir = dirPath
+	verifyCmd.Env = []string{
+		"LC_ALL=C", "LANG=C",
+		"NO_COLOR=1",
+		"GIT_CONFIG_NOSYSTEM=1",
+	}
+
+	if err := verifyCmd.Run(); err != nil {
+		return fmt.Errorf("commit %s still not available after fetch attempts", commitHash)
+	}
+
+	debug.Printf("commit %s is now available in repository", commitHash)
+
+	return nil
+}
+
 // getWorkingDir returns the working directory to use for the application.
-func (*App) getWorkingDir(args []string) (string, error) {
+func (*App) getWorkingDir(ctx context.Context, args []string, repoURL string, branch string) (string, error) {
+	// if repo URL is provided, clone it to a temporary directory
+	if repoURL != "" {
+		return cloneRepoToTemp(ctx, repoURL, branch)
+	}
+
 	var dir string
 
 	if len(args) > 0 {
@@ -247,7 +406,7 @@ func (a *App) Run(ctx context.Context, args []string) error { return a.cmd.Run(c
 func (a *App) Help() string { return a.cmd.Help() }
 
 // run in the main logic of the application.
-func (a *App) run(ctx context.Context, workingDir string) error { //nolint:funlen
+func (a *App) run(ctx context.Context, workingDir string, commitHash string) error { //nolint:funlen
 	debug.Printf("AI provider: %s", a.opt.AIProviderName)
 
 	var provider ai.Provider
@@ -284,15 +443,36 @@ func (a *App) run(ctx context.Context, workingDir string) error { //nolint:funle
 		changes, commits string
 	)
 
-	eg.Go(func(ctx context.Context) (err error) {
-		changes, err = git.Diff(ctx, workingDir)
+	if commitHash != "" {
+		// If we're using a remote repository, ensure the commit is available
+		if a.opt.RepoURL != "" {
+			if err := ensureCommitAvailable(ctx, workingDir, commitHash); err != nil {
+				return fmt.Errorf("failed to ensure commit %s is available: %w", commitHash, err)
+			}
+		}
 
-		return
-	})
+		// Get changes for a specific commit
+		eg.Go(func(ctx context.Context) (err error) {
+			changes, err = git.CommitDiff(ctx, workingDir, commitHash)
+
+			return
+		})
+	} else {
+		// Get staged changes (existing behavior)
+		eg.Go(func(ctx context.Context) (err error) {
+			changes, err = git.Diff(ctx, workingDir)
+
+			return
+		})
+	}
 
 	if histLen := int(a.opt.CommitHistoryLength); histLen > 0 {
 		eg.Go(func(ctx context.Context) (err error) {
-			commits, err = git.Log(ctx, workingDir, histLen)
+			if commitHash != "" {
+				commits, err = git.CommitLog(ctx, workingDir, commitHash, histLen)
+			} else {
+				commits, err = git.Log(ctx, workingDir, histLen)
+			}
 
 			return
 		})
@@ -308,6 +488,10 @@ func (a *App) run(ctx context.Context, workingDir string) error { //nolint:funle
 	debug.Printf("commits:\n%s", commits)
 
 	if changes == "" {
+		if commitHash != "" {
+			return fmt.Errorf("no changes found for commit %s in %s", commitHash, workingDir)
+		}
+
 		return fmt.Errorf("no changes found in %s (probably nothing staged; try `git add -A`)", workingDir)
 	}
 
