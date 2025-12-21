@@ -405,35 +405,50 @@ func (a *App) Run(ctx context.Context, args []string) error { return a.cmd.Run(c
 // Help returns the help message.
 func (a *App) Help() string { return a.cmd.Help() }
 
+func providerFromOptions(opt options) (ai.Provider, error) {
+	switch opt.AIProviderName {
+	case ai.ProviderGemini:
+		return ai.NewGemini(
+			opt.Providers.Gemini.ApiKey,
+			opt.Providers.Gemini.ModelName,
+		), nil
+	case ai.ProviderOpenAI:
+		return ai.NewOpenAI(
+			opt.Providers.OpenAI.ApiKey,
+			opt.Providers.OpenAI.ModelName,
+		), nil
+	case ai.ProviderOpenRouter:
+		return ai.NewOpenRouter(
+			opt.Providers.OpenRouter.ApiKey,
+			opt.Providers.OpenRouter.ModelName,
+		), nil
+	case ai.ProviderAnthropic:
+		return ai.NewAnthropic(
+			opt.Providers.Anthropic.ApiKey,
+			opt.Providers.Anthropic.ModelName,
+		), nil
+	default:
+		return nil, fmt.Errorf("unsupported AI provider: %s", opt.AIProviderName)
+	}
+}
+
+func markMissingHistory(commits string, histLen int64) string {
+	if commits == "" && histLen > 0 {
+		debug.Printf("git log output is empty: repository has no commits yet")
+
+		return "NO HISTORY AVAILABLE (repository has no commits yet)"
+	}
+
+	return commits
+}
+
 // run in the main logic of the application.
 func (a *App) run(ctx context.Context, workingDir string, commitHash string) error { //nolint:funlen
 	debug.Printf("AI provider: %s", a.opt.AIProviderName)
 
-	var provider ai.Provider
-
-	switch a.opt.AIProviderName {
-	case ai.ProviderGemini:
-		provider = ai.NewGemini(
-			a.opt.Providers.Gemini.ApiKey,
-			a.opt.Providers.Gemini.ModelName,
-		)
-	case ai.ProviderOpenAI:
-		provider = ai.NewOpenAI(
-			a.opt.Providers.OpenAI.ApiKey,
-			a.opt.Providers.OpenAI.ModelName,
-		)
-	case ai.ProviderOpenRouter:
-		provider = ai.NewOpenRouter(
-			a.opt.Providers.OpenRouter.ApiKey,
-			a.opt.Providers.OpenRouter.ModelName,
-		)
-	case ai.ProviderAnthropic:
-		provider = ai.NewAnthropic(
-			a.opt.Providers.Anthropic.ApiKey,
-			a.opt.Providers.Anthropic.ModelName,
-		)
-	default:
-		return fmt.Errorf("unsupported AI provider: %s", a.opt.AIProviderName)
+	provider, err := providerFromOptions(a.opt)
+	if err != nil {
+		return err
 	}
 
 	debug.Printf("working directory: %s", workingDir)
@@ -483,6 +498,8 @@ func (a *App) run(ctx context.Context, workingDir string, commitHash string) err
 	if err := eg.Wait(); err != nil {
 		return err
 	}
+
+	commits = markMissingHistory(commits, a.opt.CommitHistoryLength)
 
 	debug.Printf("changes:\n%s", changes)
 	debug.Printf("commits:\n%s", commits)
