@@ -140,7 +140,7 @@ func (f *Flag[T]) Help() (names string, usage string) {
 
 	usage = b.String()
 
-	return
+	return names, usage
 }
 
 // predefined errors for invalid flag values.
@@ -153,7 +153,7 @@ var (
 )
 
 // parseString converts a string to the corresponding flag type.
-func (f *Flag[T]) parseString(s string) (T, error) { //nolint:gocyclo
+func (f *Flag[T]) parseString(s string) (T, error) { 
 	var empty T // default zero value of type T
 
 	switch any(empty).(type) {

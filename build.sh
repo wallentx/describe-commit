@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-LINT_VERSION="${LINT_VERSION:-v1.60.3}"
+LINT_VERSION="${LINT_VERSION:-latest}"
 LINT_CMD="golangci-lint run"
 
 ensure_linter() {

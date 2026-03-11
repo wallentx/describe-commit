@@ -3,11 +3,13 @@
 version: "2"
 
 run:
+  go: "1.26"
   modules-download-mode: readonly
   allow-parallel-runners: true
 
 output:
-  formats: {text: {path: stdout}}
+  formats:
+    - format: colored-line-number
 
 linters:
   default: none
@@ -54,7 +56,7 @@ linters:
     - unconvert
     - unused
     - whitespace
-    - wsl_v5
+    - wsl
   settings:
     dupl:
       threshold: 100
@@ -86,7 +88,7 @@ linters:
       simple: true
       range-loops: true
       for-loops: true
-    wsl_v5:
+    wsl:
       allow-first-in-block: true
       allow-whole-block: false
       branch-max-lines: 2
