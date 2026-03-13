@@ -69,10 +69,10 @@ func (f *Flag[T]) IsSet() bool {
 	}
 
 	switch f.ValueSetFrom {
-	case FlagValueSourceNone, FlagValueSourceDefault:
-		return false
+	case FlagValueSourceEnv, FlagValueSourceFlag:
+		return true
 	default:
-		return *f.Value != f.Default // true if value differs from default
+		return false
 	}
 }
 
@@ -153,7 +153,7 @@ var (
 )
 
 // parseString converts a string to the corresponding flag type.
-func (f *Flag[T]) parseString(s string) (T, error) { 
+func (f *Flag[T]) parseString(s string) (T, error) {
 	var empty T // default zero value of type T
 
 	switch any(empty).(type) {

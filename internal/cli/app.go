@@ -176,12 +176,7 @@ func NewApp(name string) *App { //nolint:funlen
 	}
 
 	app.cmd.Action = func(ctx context.Context, c *cmd.Command, args []string) error {
-		// update the options from the configuration file(s)
-		if err := app.opt.UpdateFromConfigFile(append([]string{*configFile.Value}, config.FindIn(".")...)); err != nil {
-			return err
-		}
-
-		{ // override the options with the command-line flags
+		applyFlags := func() {
 			setIfFlagIsSet(&app.opt.ShortMessageOnly, shortMessageOnly)
 			setIfFlagIsSet(&app.opt.CommitHistoryLength, commitHistoryLength)
 			setIfFlagIsSet(&app.opt.EnableEmoji, enableEmoji)
@@ -200,25 +195,8 @@ func NewApp(name string) *App { //nolint:funlen
 			setIfFlagIsSet(&app.opt.Branch, branch)
 		}
 
-		if err := app.opt.Validate(); err != nil {
-			return fmt.Errorf("invalid options: %w", err)
-		}
-
-		// determine the working directory
-		var wd, wdErr = app.getWorkingDir(ctx, args, app.opt.RepoURL, app.opt.Branch)
-		if wdErr != nil {
-			return fmt.Errorf("wrong working directory: %w", wdErr)
-		}
-
-		// if repo URL was provided, we need to use a different config file search path
-		var configSearchDir = "."
-		if app.opt.RepoURL == "" {
-			configSearchDir = wd
-		}
-
-		// update the options from the configuration file(s) after we know the working directory
-		configFiles := append([]string{*configFile.Value}, config.FindIn(configSearchDir)...)
-		if err := app.opt.UpdateFromConfigFile(configFiles); err != nil {
+		wd, err := app.loadOptions(ctx, *configFile.Value, args, applyFlags)
+		if err != nil {
 			return err
 		}
 
@@ -226,6 +204,44 @@ func NewApp(name string) *App { //nolint:funlen
 	}
 
 	return &app
+}
+
+func (a *App) loadOptions(
+	ctx context.Context,
+	configFilePath string,
+	args []string,
+	applyFlags func(),
+) (string, error) {
+	a.opt = newOptionsWithDefaults()
+
+	if err := a.opt.UpdateFromConfigFile([]string{configFilePath}); err != nil {
+		return "", err
+	}
+
+	applyFlags()
+
+	wd, err := a.getWorkingDir(ctx, args, a.opt.RepoURL, a.opt.Branch)
+	if err != nil {
+		return "", fmt.Errorf("wrong working directory: %w", err)
+	}
+
+	// Remote repositories use the caller's local config search path; local repositories use the target repo path.
+	configSearchDir := "."
+	if a.opt.RepoURL == "" {
+		configSearchDir = wd
+	}
+
+	if err := a.opt.UpdateFromConfigFile(config.FindIn(configSearchDir)); err != nil {
+		return "", err
+	}
+
+	applyFlags()
+
+	if err := a.opt.Validate(); err != nil {
+		return "", fmt.Errorf("invalid options: %w", err)
+	}
+
+	return wd, nil
 }
 
 // setIfFlagIsSet sets the value from the flag to the option if the flag is set and the value is not nil.
