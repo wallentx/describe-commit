@@ -34,13 +34,19 @@ func TestFlag_IsSet(t *testing.T) {
 		Value:        &intValue,
 		ValueSetFrom: cmd.FlagValueSourceFlag,
 		Default:      intValue,
-	}).IsSet(), false, "flag with value that equals to default should not be set")
+	}).IsSet(), true, "flag set from CLI should be set even when it equals the default")
 
 	assertEqual(t, (&cmd.Flag[bool]{
 		Value:        new(bool),
 		ValueSetFrom: cmd.FlagValueSourceFlag,
 		Default:      true,
 	}).IsSet(), true, "flag with value that differs from default should be set")
+
+	assertEqual(t, (&cmd.Flag[bool]{
+		Value:        new(bool),
+		ValueSetFrom: cmd.FlagValueSourceEnv,
+		Default:      false,
+	}).IsSet(), true, "flag set from environment should be set even when it equals the default")
 }
 
 func TestFlag_Help(t *testing.T) {

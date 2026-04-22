@@ -20,6 +20,9 @@ type options struct {
 	MaxRetries          uint
 	RetryDelay          time.Duration
 	AIProviderName      string
+	CommitHash          string
+	RepoURL             string
+	Branch              string
 
 	Providers struct {
 		Gemini     struct{ ApiKey, ModelName, BaseURL string }
@@ -75,47 +78,73 @@ func (o *options) UpdateFromConfigFile(filePath []string) error {
 		}
 	}
 
+	return o.applyConfig(cfg)
+}
+
+func (o *options) applyConfig(cfg config.Config) error {
 	setIfSourceNotNil(&o.ShortMessageOnly, cfg.ShortMessageOnly)
 	setIfSourceNotNil(&o.CommitHistoryLength, cfg.CommitHistoryLength)
 	setIfSourceNotNil(&o.EnableEmoji, cfg.EnableEmoji)
 	setIfSourceNotNil(&o.MaxOutputTokens, cfg.MaxOutputTokens)
 	setIfSourceNotNil(&o.MaxRetries, cfg.MaxRetries)
 	setIfSourceNotNil(&o.AIProviderName, cfg.AIProviderName)
+	setIfSourceNotNil(&o.CommitHash, cfg.CommitHash)
+	setIfSourceNotNil(&o.RepoURL, cfg.RepoURL)
+	setIfSourceNotNil(&o.Branch, cfg.Branch)
 
-	if d := cfg.RetryDelay; d != nil && *d != "" {
-		dur, parseErr := time.ParseDuration(*d)
-		if parseErr != nil {
-			return fmt.Errorf("invalid retryDelay value %q: %w", *d, parseErr)
-		}
-
-		o.RetryDelay = dur
+	if err := o.applyRetryDelay(cfg.RetryDelay); err != nil {
+		return err
 	}
 
 	if sub := cfg.Gemini; sub != nil {
-		setIfSourceNotNil(&o.Providers.Gemini.ApiKey, sub.ApiKey)
-		setIfSourceNotNil(&o.Providers.Gemini.ModelName, sub.ModelName)
-		setIfSourceNotNil(&o.Providers.Gemini.BaseURL, sub.BaseURL)
+		setProviderConfig(&o.Providers.Gemini.ApiKey, &o.Providers.Gemini.ModelName, &o.Providers.Gemini.BaseURL,
+			sub.ApiKey, sub.ModelName, sub.BaseURL)
 	}
 
 	if sub := cfg.OpenAI; sub != nil {
-		setIfSourceNotNil(&o.Providers.OpenAI.ApiKey, sub.ApiKey)
-		setIfSourceNotNil(&o.Providers.OpenAI.ModelName, sub.ModelName)
-		setIfSourceNotNil(&o.Providers.OpenAI.BaseURL, sub.BaseURL)
+		setProviderConfig(&o.Providers.OpenAI.ApiKey, &o.Providers.OpenAI.ModelName, &o.Providers.OpenAI.BaseURL,
+			sub.ApiKey, sub.ModelName, sub.BaseURL)
 	}
 
 	if sub := cfg.OpenRouter; sub != nil {
-		setIfSourceNotNil(&o.Providers.OpenRouter.ApiKey, sub.ApiKey)
-		setIfSourceNotNil(&o.Providers.OpenRouter.ModelName, sub.ModelName)
-		setIfSourceNotNil(&o.Providers.OpenRouter.BaseURL, sub.BaseURL)
+		setProviderConfig(
+			&o.Providers.OpenRouter.ApiKey, &o.Providers.OpenRouter.ModelName, &o.Providers.OpenRouter.BaseURL,
+			sub.ApiKey, sub.ModelName, sub.BaseURL,
+		)
 	}
 
 	if sub := cfg.Anthropic; sub != nil {
-		setIfSourceNotNil(&o.Providers.Anthropic.ApiKey, sub.ApiKey)
-		setIfSourceNotNil(&o.Providers.Anthropic.ModelName, sub.ModelName)
-		setIfSourceNotNil(&o.Providers.Anthropic.BaseURL, sub.BaseURL)
+		setProviderConfig(
+			&o.Providers.Anthropic.ApiKey, &o.Providers.Anthropic.ModelName, &o.Providers.Anthropic.BaseURL,
+			sub.ApiKey, sub.ModelName, sub.BaseURL,
+		)
 	}
 
 	return nil
+}
+
+func (o *options) applyRetryDelay(delay *string) error {
+	if delay == nil || *delay == "" {
+		return nil
+	}
+
+	dur, parseErr := time.ParseDuration(*delay)
+	if parseErr != nil {
+		return fmt.Errorf("invalid retryDelay value %q: %w", *delay, parseErr)
+	}
+
+	o.RetryDelay = dur
+
+	return nil
+}
+
+func setProviderConfig(
+	apiKeyTarget, modelNameTarget, baseURLTarget *string,
+	apiKeySource, modelNameSource, baseURLSource *string,
+) {
+	setIfSourceNotNil(apiKeyTarget, apiKeySource)
+	setIfSourceNotNil(modelNameTarget, modelNameSource)
+	setIfSourceNotNil(baseURLTarget, baseURLSource)
 }
 
 // setIfSourceNotNil sets the target value to the source value if both are not nil.
@@ -136,44 +165,73 @@ func (o *options) Validate() error {
 		return fmt.Errorf("unsupported AI provider: %s", v)
 	}
 
-	if o.AIProviderName == ai.ProviderGemini {
-		if o.Providers.Gemini.ApiKey == "" {
-			return errors.New("gemini API key is required")
-		}
-
-		if o.Providers.Gemini.ModelName == "" {
-			return errors.New("gemini model name is required")
-		}
+	// If repo URL is provided, commit hash must also be provided
+	if o.RepoURL != "" && o.CommitHash == "" {
+		return errors.New("commit hash must be provided when using --repo option")
 	}
 
-	if o.AIProviderName == ai.ProviderOpenAI {
-		if o.Providers.OpenAI.ApiKey == "" {
-			return errors.New("OpenAI API key is required")
-		}
+	return o.validateProviderCredentials()
+}
 
-		if o.Providers.OpenAI.ModelName == "" {
-			return errors.New("OpenAI model name is required")
-		}
+// validateProviderCredentials validates the API keys and model names for the selected provider.
+func (o *options) validateProviderCredentials() error {
+	switch o.AIProviderName {
+	case ai.ProviderGemini:
+		return o.validateGemini()
+	case ai.ProviderOpenAI:
+		return o.validateOpenAI()
+	case ai.ProviderOpenRouter:
+		return o.validateOpenRouter()
+	case ai.ProviderAnthropic:
+		return o.validateAnthropic()
+	default:
+		return fmt.Errorf("unsupported AI provider: %s", o.AIProviderName)
+	}
+}
+
+func (o *options) validateGemini() error {
+	if o.Providers.Gemini.ApiKey == "" {
+		return errors.New("gemini API key is required")
 	}
 
-	if o.AIProviderName == ai.ProviderOpenRouter {
-		if o.Providers.OpenRouter.ApiKey == "" {
-			return errors.New("OpenRouter API key is required")
-		}
-
-		if o.Providers.OpenRouter.ModelName == "" {
-			return errors.New("OpenRouter model name is required")
-		}
+	if o.Providers.Gemini.ModelName == "" {
+		return errors.New("gemini model name is required")
 	}
 
-	if o.AIProviderName == ai.ProviderAnthropic {
-		if o.Providers.Anthropic.ApiKey == "" {
-			return errors.New("Anthropic API key is required") //nolint:staticcheck
-		}
+	return nil
+}
 
-		if o.Providers.Anthropic.ModelName == "" {
-			return errors.New("Anthropic model name is required") //nolint:staticcheck
-		}
+func (o *options) validateOpenAI() error {
+	if o.Providers.OpenAI.ApiKey == "" {
+		return errors.New("missing OpenAI API key")
+	}
+
+	if o.Providers.OpenAI.ModelName == "" {
+		return errors.New("missing OpenAI model name")
+	}
+
+	return nil
+}
+
+func (o *options) validateOpenRouter() error {
+	if o.Providers.OpenRouter.ApiKey == "" {
+		return errors.New("missing OpenRouter API key")
+	}
+
+	if o.Providers.OpenRouter.ModelName == "" {
+		return errors.New("missing OpenRouter model name")
+	}
+
+	return nil
+}
+
+func (o *options) validateAnthropic() error {
+	if o.Providers.Anthropic.ApiKey == "" {
+		return errors.New("missing Anthropic API key")
+	}
+
+	if o.Providers.Anthropic.ModelName == "" {
+		return errors.New("missing Anthropic model name")
 	}
 
 	return nil

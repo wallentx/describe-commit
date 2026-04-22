@@ -3,11 +3,15 @@
 version: "2"
 
 run:
+  go: "1.26"
   modules-download-mode: readonly
   allow-parallel-runners: true
 
 output:
-  formats: {text: {path: stdout}}
+  formats:
+    text:
+      path: stdout
+      colors: true
 
 linters:
   default: none

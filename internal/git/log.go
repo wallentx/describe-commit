@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // Log returns the commit log of the repository limited to the specified number of commits.
@@ -37,8 +38,14 @@ func Log(ctx context.Context, dirPath string, len int) (string, error) {
 	cmd.Stderr = &stdErr
 
 	if err := cmd.Run(); err != nil {
-		if stdErr.Len() > 0 {
-			err = fmt.Errorf("%s: %w", stdErrToString(stdErr.String()), err)
+		stdErrStr := stdErrToString(stdErr.String())
+
+		if strings.Contains(stdErrStr, "does not have any commits yet") {
+			return "", nil // no history available for a fresh repository
+		}
+
+		if stdErrStr != "" {
+			err = fmt.Errorf("%s: %w", stdErrStr, err)
 		}
 
 		return "", fmt.Errorf("git log failed: %w", err)

@@ -18,6 +18,9 @@ type (
 		EnableEmoji         *bool       `yaml:"enableEmoji"`
 		AIProviderName      *string     `yaml:"aiProvider"`
 		MaxOutputTokens     *int64      `yaml:"maxOutputTokens"`
+		CommitHash          *string     `yaml:"commitHash"`
+		RepoURL             *string     `yaml:"repoURL"`
+		Branch              *string     `yaml:"branch"`
 		MaxRetries          *uint       `yaml:"maxRetries"`
 		RetryDelay          *string     `yaml:"retryDelay"`
 		Gemini              *Gemini     `yaml:"gemini"`

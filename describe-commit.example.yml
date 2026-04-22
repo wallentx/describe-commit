@@ -29,6 +29,21 @@ maxOutputTokens: 500
 # @enum {gemini|openai|openrouter|anthropic}
 aiProvider: gemini
 
+# Specific commit hash to describe (instead of staged changes)
+# When set, the tool will analyze the given commit instead of staged changes
+# @type {string}
+#commitHash: abc123def
+
+# Repository URL in format 'owner/reponame' (requires commitHash to be set)
+# When set, the tool will clone the repository temporarily
+# @type {string}
+#repoURL: owner/repository-name
+
+# Git branch to use when cloning repository (used with repoURL)
+# If not specified, the default branch will be used
+# @type {string}
+#branch: main
+
 # Gemini provider configuration
 gemini:
   # Gemini API key (issue your own at https://aistudio.google.com/app/api-keys, as of February 2025 it's free)

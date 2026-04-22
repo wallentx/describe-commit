@@ -69,10 +69,10 @@ func (f *Flag[T]) IsSet() bool {
 	}
 
 	switch f.ValueSetFrom {
-	case FlagValueSourceNone, FlagValueSourceDefault:
-		return false
+	case FlagValueSourceEnv, FlagValueSourceFlag:
+		return true
 	default:
-		return *f.Value != f.Default // true if value differs from default
+		return false
 	}
 }
 
@@ -140,7 +140,7 @@ func (f *Flag[T]) Help() (names string, usage string) {
 
 	usage = b.String()
 
-	return
+	return names, usage
 }
 
 // predefined errors for invalid flag values.
@@ -153,64 +153,106 @@ var (
 )
 
 // parseString converts a string to the corresponding flag type.
-func (f *Flag[T]) parseString(s string) (T, error) { //nolint:gocyclo
+func (f *Flag[T]) parseString(s string) (T, error) {
 	var empty T // default zero value of type T
 
 	switch any(empty).(type) {
 	case bool:
-		v, err := strconv.ParseBool(s)
-		if err != nil {
-			return empty, errInvalidBool
-		}
-
-		return any(v).(T), nil
+		return parseBoolValue[T](s)
 	case int:
-		v, err := strconv.Atoi(s)
-		if err != nil {
-			return empty, errInvalidInt
-		}
-
-		return any(v).(T), nil
+		return parseIntValue[T](s)
 	case int64:
-		v, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return empty, errInvalidInt
-		}
-
-		return any(v).(T), nil
+		return parseInt64Value[T](s)
 	case string:
 		return any(s).(T), nil
 	case uint:
-		v, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			return empty, errInvalidUint
-		}
-
-		return any(uint(v)).(T), nil
+		return parseUintValue[T](s)
 	case uint64:
-		v, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			return empty, errInvalidUint
-		}
-
-		return any(v).(T), nil
+		return parseUint64Value[T](s)
 	case float64:
-		v, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return empty, errInvalidFloat
-		}
-
-		return any(v).(T), nil
+		return parseFloat64Value[T](s)
 	case time.Duration:
-		v, err := time.ParseDuration(s)
-		if err != nil {
-			return empty, errInvalidDuration
-		}
-
-		return any(v).(T), nil
+		return parseDurationValue[T](s)
 	}
 
 	return empty, fmt.Errorf("unsupported flag type: %T", empty) // will never happen
+}
+
+func parseBoolValue[T any](s string) (T, error) {
+	var empty T
+
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		return empty, errInvalidBool
+	}
+
+	return any(v).(T), nil
+}
+
+func parseIntValue[T any](s string) (T, error) {
+	var empty T
+
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return empty, errInvalidInt
+	}
+
+	return any(v).(T), nil
+}
+
+func parseInt64Value[T any](s string) (T, error) {
+	var empty T
+
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return empty, errInvalidInt
+	}
+
+	return any(v).(T), nil
+}
+
+func parseUintValue[T any](s string) (T, error) {
+	var empty T
+
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return empty, errInvalidUint
+	}
+
+	return any(uint(v)).(T), nil
+}
+
+func parseUint64Value[T any](s string) (T, error) {
+	var empty T
+
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return empty, errInvalidUint
+	}
+
+	return any(v).(T), nil
+}
+
+func parseFloat64Value[T any](s string) (T, error) {
+	var empty T
+
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return empty, errInvalidFloat
+	}
+
+	return any(v).(T), nil
+}
+
+func parseDurationValue[T any](s string) (T, error) {
+	var empty T
+
+	v, err := time.ParseDuration(s)
+	if err != nil {
+		return empty, errInvalidDuration
+	}
+
+	return any(v).(T), nil
 }
 
 // envValue retrieves the flag value from environment variables, if set.
