@@ -78,6 +78,10 @@ func (o *options) UpdateFromConfigFile(filePath []string) error {
 		}
 	}
 
+	return o.applyConfig(cfg)
+}
+
+func (o *options) applyConfig(cfg config.Config) error {
 	setIfSourceNotNil(&o.ShortMessageOnly, cfg.ShortMessageOnly)
 	setIfSourceNotNil(&o.CommitHistoryLength, cfg.CommitHistoryLength)
 	setIfSourceNotNil(&o.EnableEmoji, cfg.EnableEmoji)
@@ -88,40 +92,59 @@ func (o *options) UpdateFromConfigFile(filePath []string) error {
 	setIfSourceNotNil(&o.RepoURL, cfg.RepoURL)
 	setIfSourceNotNil(&o.Branch, cfg.Branch)
 
-	if d := cfg.RetryDelay; d != nil && *d != "" {
-		dur, parseErr := time.ParseDuration(*d)
-		if parseErr != nil {
-			return fmt.Errorf("invalid retryDelay value %q: %w", *d, parseErr)
-		}
-
-		o.RetryDelay = dur
+	if err := o.applyRetryDelay(cfg.RetryDelay); err != nil {
+		return err
 	}
 
 	if sub := cfg.Gemini; sub != nil {
-		setIfSourceNotNil(&o.Providers.Gemini.ApiKey, sub.ApiKey)
-		setIfSourceNotNil(&o.Providers.Gemini.ModelName, sub.ModelName)
-		setIfSourceNotNil(&o.Providers.Gemini.BaseURL, sub.BaseURL)
+		setProviderConfig(&o.Providers.Gemini.ApiKey, &o.Providers.Gemini.ModelName, &o.Providers.Gemini.BaseURL,
+			sub.ApiKey, sub.ModelName, sub.BaseURL)
 	}
 
 	if sub := cfg.OpenAI; sub != nil {
-		setIfSourceNotNil(&o.Providers.OpenAI.ApiKey, sub.ApiKey)
-		setIfSourceNotNil(&o.Providers.OpenAI.ModelName, sub.ModelName)
-		setIfSourceNotNil(&o.Providers.OpenAI.BaseURL, sub.BaseURL)
+		setProviderConfig(&o.Providers.OpenAI.ApiKey, &o.Providers.OpenAI.ModelName, &o.Providers.OpenAI.BaseURL,
+			sub.ApiKey, sub.ModelName, sub.BaseURL)
 	}
 
 	if sub := cfg.OpenRouter; sub != nil {
-		setIfSourceNotNil(&o.Providers.OpenRouter.ApiKey, sub.ApiKey)
-		setIfSourceNotNil(&o.Providers.OpenRouter.ModelName, sub.ModelName)
-		setIfSourceNotNil(&o.Providers.OpenRouter.BaseURL, sub.BaseURL)
+		setProviderConfig(
+			&o.Providers.OpenRouter.ApiKey, &o.Providers.OpenRouter.ModelName, &o.Providers.OpenRouter.BaseURL,
+			sub.ApiKey, sub.ModelName, sub.BaseURL,
+		)
 	}
 
 	if sub := cfg.Anthropic; sub != nil {
-		setIfSourceNotNil(&o.Providers.Anthropic.ApiKey, sub.ApiKey)
-		setIfSourceNotNil(&o.Providers.Anthropic.ModelName, sub.ModelName)
-		setIfSourceNotNil(&o.Providers.Anthropic.BaseURL, sub.BaseURL)
+		setProviderConfig(
+			&o.Providers.Anthropic.ApiKey, &o.Providers.Anthropic.ModelName, &o.Providers.Anthropic.BaseURL,
+			sub.ApiKey, sub.ModelName, sub.BaseURL,
+		)
 	}
 
 	return nil
+}
+
+func (o *options) applyRetryDelay(delay *string) error {
+	if delay == nil || *delay == "" {
+		return nil
+	}
+
+	dur, parseErr := time.ParseDuration(*delay)
+	if parseErr != nil {
+		return fmt.Errorf("invalid retryDelay value %q: %w", *delay, parseErr)
+	}
+
+	o.RetryDelay = dur
+
+	return nil
+}
+
+func setProviderConfig(
+	apiKeyTarget, modelNameTarget, baseURLTarget *string,
+	apiKeySource, modelNameSource, baseURLSource *string,
+) {
+	setIfSourceNotNil(apiKeyTarget, apiKeySource)
+	setIfSourceNotNil(modelNameTarget, modelNameSource)
+	setIfSourceNotNil(baseURLTarget, baseURLSource)
 }
 
 // setIfSourceNotNil sets the target value to the source value if both are not nil.
@@ -180,11 +203,11 @@ func (o *options) validateGemini() error {
 
 func (o *options) validateOpenAI() error {
 	if o.Providers.OpenAI.ApiKey == "" {
-		return errors.New("OpenAI API key is required")
+		return errors.New("missing OpenAI API key")
 	}
 
 	if o.Providers.OpenAI.ModelName == "" {
-		return errors.New("OpenAI model name is required")
+		return errors.New("missing OpenAI model name")
 	}
 
 	return nil
@@ -192,11 +215,11 @@ func (o *options) validateOpenAI() error {
 
 func (o *options) validateOpenRouter() error {
 	if o.Providers.OpenRouter.ApiKey == "" {
-		return errors.New("OpenRouter API key is required")
+		return errors.New("missing OpenRouter API key")
 	}
 
 	if o.Providers.OpenRouter.ModelName == "" {
-		return errors.New("OpenRouter model name is required")
+		return errors.New("missing OpenRouter model name")
 	}
 
 	return nil
@@ -204,11 +227,11 @@ func (o *options) validateOpenRouter() error {
 
 func (o *options) validateAnthropic() error {
 	if o.Providers.Anthropic.ApiKey == "" {
-		return errors.New("Anthropic API key is required")
+		return errors.New("missing Anthropic API key")
 	}
 
 	if o.Providers.Anthropic.ModelName == "" {
-		return errors.New("Anthropic model name is required")
+		return errors.New("missing Anthropic model name")
 	}
 
 	return nil

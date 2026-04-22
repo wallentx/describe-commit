@@ -184,6 +184,7 @@ func NewApp(name string) *App { //nolint:funlen
 			Usage:   "Git branch to use when cloning repository (used with --repo)",
 			EnvVars: []string{"BRANCH"},
 			Default: app.opt.Branch,
+		}
 		anthropicBaseURL = cmd.Flag[string]{
 			Names:   []string{"anthropic-base-url"},
 			Usage:   "Anthropic API base URL (overrides the default endpoint)",
@@ -470,34 +471,38 @@ func (a *App) Run(ctx context.Context, args []string) error { return a.cmd.Run(c
 func (a *App) Help() string { return a.cmd.Help() }
 
 func providerFromOptions(opt options) (ai.Provider, error) {
+	var provider ai.Provider
+
 	switch opt.AIProviderName {
 	case ai.ProviderGemini:
 		provider = ai.NewGemini(
-			a.opt.Providers.Gemini.ApiKey,
-			a.opt.Providers.Gemini.ModelName,
-			ai.WithGeminiBaseURL(a.opt.Providers.Gemini.BaseURL),
+			opt.Providers.Gemini.ApiKey,
+			opt.Providers.Gemini.ModelName,
+			ai.WithGeminiBaseURL(opt.Providers.Gemini.BaseURL),
 		)
 	case ai.ProviderOpenAI:
 		provider = ai.NewOpenAI(
-			a.opt.Providers.OpenAI.ApiKey,
-			a.opt.Providers.OpenAI.ModelName,
-			ai.WithOpenAIBaseURL(a.opt.Providers.OpenAI.BaseURL),
+			opt.Providers.OpenAI.ApiKey,
+			opt.Providers.OpenAI.ModelName,
+			ai.WithOpenAIBaseURL(opt.Providers.OpenAI.BaseURL),
 		)
 	case ai.ProviderOpenRouter:
 		provider = ai.NewOpenRouter(
-			a.opt.Providers.OpenRouter.ApiKey,
-			a.opt.Providers.OpenRouter.ModelName,
-			ai.WithOpenRouterBaseURL(a.opt.Providers.OpenRouter.BaseURL),
+			opt.Providers.OpenRouter.ApiKey,
+			opt.Providers.OpenRouter.ModelName,
+			ai.WithOpenRouterBaseURL(opt.Providers.OpenRouter.BaseURL),
 		)
 	case ai.ProviderAnthropic:
 		provider = ai.NewAnthropic(
-			a.opt.Providers.Anthropic.ApiKey,
-			a.opt.Providers.Anthropic.ModelName,
-			ai.WithAnthropicBaseURL(a.opt.Providers.Anthropic.BaseURL),
+			opt.Providers.Anthropic.ApiKey,
+			opt.Providers.Anthropic.ModelName,
+			ai.WithAnthropicBaseURL(opt.Providers.Anthropic.BaseURL),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported AI provider: %s", opt.AIProviderName)
 	}
+
+	return provider, nil
 }
 
 func markMissingHistory(commits string, histLen int64) string {

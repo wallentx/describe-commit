@@ -9,7 +9,9 @@ run:
 
 output:
   formats:
-    - format: colored-line-number
+    text:
+      path: stdout
+      colors: true
 
 linters:
   default: none
