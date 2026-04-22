@@ -50,7 +50,6 @@ func GeneratePrompt(opts ...Option) string { //nolint:funlen
 			gitDiffBegin, gitDiffEnd)
 		_, _ = fmt.Fprintf(&b, "2. The output of `git log`, presenting recent commit history, is wrapped between `%s` and `%s`.\n", //nolint:lll
 			gitLogBegin, gitLogEnd)
-
 		b.WriteRune('\n')
 	}
 

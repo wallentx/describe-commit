@@ -11,10 +11,13 @@ import (
 	"time"
 )
 
+const anthropicDefaultBaseURL = "https://api.anthropic.com"
+
 // Anthropic is a provider for the Anthropic API.
 type Anthropic struct {
 	httpClient        httpClient
 	apiKey, modelName string
+	baseURL           string
 }
 
 var _ Provider = (*Anthropic)(nil) // ensure the interface is implemented
@@ -22,6 +25,7 @@ var _ Provider = (*Anthropic)(nil) // ensure the interface is implemented
 type (
 	AnthropicOptions struct {
 		HttpClient httpClient
+		BaseURL    string
 	}
 
 	// AnthropicOption allows to customize the Anthropic provider.
@@ -33,8 +37,14 @@ func WithAnthropicHttpClient(c httpClient) AnthropicOption {
 	return func(o *AnthropicOptions) { o.HttpClient = c }
 }
 
+// WithAnthropicBaseURL overrides the default Anthropic API base URL.
+// Use this to point the provider at an Anthropic-compatible endpoint or proxy.
+func WithAnthropicBaseURL(url string) AnthropicOption {
+	return func(o *AnthropicOptions) { o.BaseURL = url }
+}
+
 // NewAnthropic creates a new Anthropic provider.
-func NewAnthropic(apiKey, model string, opt ...AnthropicOption) *Anthropic {
+func NewAnthropic(apiKey, model string, opt ...AnthropicOption) *Anthropic { //nolint:dupl
 	var opts AnthropicOptions
 
 	for _, o := range opt {
@@ -54,10 +64,14 @@ func NewAnthropic(apiKey, model string, opt ...AnthropicOption) *Anthropic {
 		}
 	}
 
+	if opts.BaseURL != "" {
+		p.baseURL = strings.TrimRight(opts.BaseURL, "/")
+	}
+
 	return &p
 }
 
-func (p *Anthropic) Query( //nolint:dupl
+func (p *Anthropic) Query(
 	ctx context.Context,
 	changes, commits string,
 	opts ...Option,
@@ -141,9 +155,14 @@ func (p *Anthropic) newRequest(
 		return nil, jErr
 	}
 
+	base := anthropicDefaultBaseURL
+	if p.baseURL != "" {
+		base = p.baseURL
+	}
+
 	req, rErr := http.NewRequestWithContext(ctx,
 		http.MethodPost,
-		"https://api.anthropic.com/v1/messages",
+		base+"/v1/messages",
 		bytes.NewReader(j),
 	)
 	if rErr != nil {
@@ -159,23 +178,42 @@ func (p *Anthropic) newRequest(
 
 // responseToError converts the response from the Anthropic API to an error.
 func (p *Anthropic) responseToError(resp *http.Response) error {
-	var response struct {
+	// https://docs.anthropic.com/en/api/errors
+	const anthropicOverloaded = 529 // non-standard code Anthropic uses to signal server overload
+
+	var body struct {
 		Error struct {
+			Type    string `json:"type"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err == nil && response.Error.Message != "" {
-		return fmt.Errorf(
-			"Anthropic API error: %s (status code: %d)",
-			response.Error.Message, resp.StatusCode,
-		)
+	retryable := resp.StatusCode == http.StatusTooManyRequests || // 429
+		resp.StatusCode == http.StatusInternalServerError || // 500
+		resp.StatusCode == http.StatusBadGateway || // 502
+		resp.StatusCode == http.StatusServiceUnavailable || // 503
+		resp.StatusCode == http.StatusGatewayTimeout || // 504
+		resp.StatusCode == anthropicOverloaded // 529
+
+	var err error
+
+	if dErr := json.NewDecoder(resp.Body).Decode(&body); dErr == nil && body.Error.Message != "" {
+		err = fmt.Errorf("Anthropic API error: %s (status code: %d)", body.Error.Message, resp.StatusCode)
+
+		// overloaded_error type may arrive with unexpected status codes too
+		if body.Error.Type == "overloaded_error" {
+			retryable = true
+		}
+	} else {
+		err = fmt.Errorf("unexpected Anthropic API response status code: %d (%s)",
+			resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
-	return fmt.Errorf(
-		"unexpected Anthropic API response status code: %d (%s)",
-		resp.StatusCode, http.StatusText(resp.StatusCode),
-	)
+	if retryable {
+		return newRetryableError(err)
+	}
+
+	return err
 }
 
 // parseResponse parses the response from the Anthropic API.

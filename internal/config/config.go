@@ -21,6 +21,8 @@ type (
 		CommitHash          *string     `yaml:"commitHash"`
 		RepoURL             *string     `yaml:"repoURL"`
 		Branch              *string     `yaml:"branch"`
+		MaxRetries          *uint       `yaml:"maxRetries"`
+		RetryDelay          *string     `yaml:"retryDelay"`
 		Gemini              *Gemini     `yaml:"gemini"`
 		OpenAI              *OpenAI     `yaml:"openai"`
 		OpenRouter          *OpenRouter `yaml:"openrouter"`
@@ -30,21 +32,25 @@ type (
 	Gemini struct {
 		ApiKey    *string `yaml:"apiKey"`
 		ModelName *string `yaml:"modelName"`
+		BaseURL   *string `yaml:"baseUrl"`
 	}
 
 	OpenAI struct {
 		ApiKey    *string `yaml:"apiKey"`
 		ModelName *string `yaml:"modelName"`
+		BaseURL   *string `yaml:"baseUrl"`
 	}
 
 	OpenRouter struct {
 		ApiKey    *string `yaml:"apiKey"`
 		ModelName *string `yaml:"modelName"`
+		BaseURL   *string `yaml:"baseUrl"`
 	}
 
 	Anthropic struct {
 		ApiKey    *string `yaml:"apiKey"`
 		ModelName *string `yaml:"modelName"`
+		BaseURL   *string `yaml:"baseUrl"`
 	}
 )
 

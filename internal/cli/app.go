@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gh.tarampamp.am/describe-commit/internal/ai"
 	"gh.tarampamp.am/describe-commit/internal/cli/cmd"
@@ -15,6 +16,7 @@ import (
 	"gh.tarampamp.am/describe-commit/internal/debug"
 	"gh.tarampamp.am/describe-commit/internal/errgroup"
 	"gh.tarampamp.am/describe-commit/internal/git"
+	"gh.tarampamp.am/describe-commit/internal/retry"
 	"gh.tarampamp.am/describe-commit/internal/version"
 )
 
@@ -74,6 +76,18 @@ func NewApp(name string) *App { //nolint:funlen
 			},
 			Default: app.opt.MaxOutputTokens,
 		}
+		retryAttempts = cmd.Flag[uint]{
+			Names:   []string{"retry-attempts"},
+			Usage:   "Maximum number of retry attempts on retryable API errors (0 = unlimited retries)",
+			EnvVars: []string{"RETRY_ATTEMPTS"},
+			Default: app.opt.MaxRetries,
+		}
+		retryDelay = cmd.Flag[time.Duration]{
+			Names:   []string{"retry-delay"},
+			Usage:   "Delay between retry attempts (e.g. 1s, 500ms)",
+			EnvVars: []string{"RETRY_DELAY"},
+			Default: app.opt.RetryDelay,
+		}
 		aiProviderName = cmd.Flag[string]{
 			Names:   []string{"ai-provider", "ai"},
 			Usage:   fmt.Sprintf("AI provider name (%s)", strings.Join(ai.SupportedProviders(), "|")),
@@ -89,49 +103,67 @@ func NewApp(name string) *App { //nolint:funlen
 		}
 		geminiApiKey = cmd.Flag[string]{
 			Names:   []string{"gemini-api-key", "ga"},
-			Usage:   "Gemini API key (https://bit.ly/4jZhiKI, as of February 2025 it's free)",
+			Usage:   "Gemini API key (https://aistudio.google.com/app/api-keys, as of February 2025 it's free)",
 			EnvVars: []string{"GEMINI_API_KEY"},
 			Default: app.opt.Providers.Gemini.ApiKey,
 		}
 		geminiModelName = cmd.Flag[string]{
 			Names:   []string{"gemini-model-name", "gm"},
-			Usage:   "Gemini model name (https://bit.ly/4i02ARR)",
+			Usage:   "Gemini model name (https://ai.google.dev/gemini-api/docs/models)",
 			EnvVars: []string{"GEMINI_MODEL_NAME"},
 			Default: app.opt.Providers.Gemini.ModelName,
 		}
+		geminiBaseURL = cmd.Flag[string]{
+			Names:   []string{"gemini-base-url"},
+			Usage:   "Gemini API base URL (overrides the default endpoint)",
+			EnvVars: []string{"GEMINI_BASE_URL"},
+			Default: app.opt.Providers.Gemini.BaseURL,
+		}
 		openAIApiKey = cmd.Flag[string]{
 			Names:   []string{"openai-api-key", "oa"},
-			Usage:   "OpenAI API key (https://bit.ly/4i03NbR, you need to add funds to your account)",
+			Usage:   "OpenAI API key (https://platform.openai.com/api-keys, you need to add funds to your account)",
 			EnvVars: []string{"OPENAI_API_KEY"},
 			Default: app.opt.Providers.OpenAI.ApiKey,
 		}
 		openAIModelName = cmd.Flag[string]{
 			Names:   []string{"openai-model-name", "om"},
-			Usage:   "OpenAI model name (https://bit.ly/4hXCXkL)",
+			Usage:   "OpenAI model name (https://developers.openai.com/api/docs/models)",
 			EnvVars: []string{"OPENAI_MODEL_NAME"},
 			Default: app.opt.Providers.OpenAI.ModelName,
 		}
+		openAIBaseURL = cmd.Flag[string]{
+			Names:   []string{"openai-base-url"},
+			Usage:   "OpenAI API base URL (use to connect to OpenAI-compatible endpoints, e.g. Ollama)",
+			EnvVars: []string{"OPENAI_BASE_URL"},
+			Default: app.opt.Providers.OpenAI.BaseURL,
+		}
 		openRouterApiKey = cmd.Flag[string]{
 			Names:   []string{"openrouter-api-key", "ora"},
-			Usage:   "OpenRouter API key (https://bit.ly/4hU1yY1)",
+			Usage:   "OpenRouter API key (https://openrouter.ai/workspaces/default/keys)",
 			EnvVars: []string{"OPENROUTER_API_KEY"},
 			Default: app.opt.Providers.OpenRouter.ApiKey,
 		}
 		openRouterModelName = cmd.Flag[string]{
 			Names:   []string{"openrouter-model-name", "orm"},
-			Usage:   "OpenRouter model name (https://bit.ly/4ktktuG)",
+			Usage:   "OpenRouter model name (https://openrouter.ai/models)",
 			EnvVars: []string{"OPENROUTER_MODEL_NAME"},
 			Default: app.opt.Providers.OpenRouter.ModelName,
 		}
+		openRouterBaseURL = cmd.Flag[string]{
+			Names:   []string{"openrouter-base-url"},
+			Usage:   "OpenRouter API base URL (overrides the default endpoint)",
+			EnvVars: []string{"OPENROUTER_BASE_URL"},
+			Default: app.opt.Providers.OpenRouter.BaseURL,
+		}
 		anthropicApiKey = cmd.Flag[string]{
 			Names:   []string{"anthropic-api-key", "ana"},
-			Usage:   "Anthropic API key (https://bit.ly/4klw0Mw)",
+			Usage:   "Anthropic API key (https://platform.claude.com/settings/keys)",
 			EnvVars: []string{"ANTHROPIC_API_KEY"},
 			Default: app.opt.Providers.Anthropic.ApiKey,
 		}
 		anthropicModelName = cmd.Flag[string]{
 			Names:   []string{"anthropic-model-name", "anm"},
-			Usage:   "Anthropic model name (https://bit.ly/4bmQDDV)",
+			Usage:   "Anthropic model name (https://platform.claude.com/docs/en/about-claude/models/overview)",
 			EnvVars: []string{"ANTHROPIC_MODEL_NAME"},
 			Default: app.opt.Providers.Anthropic.ModelName,
 		}
@@ -152,6 +184,11 @@ func NewApp(name string) *App { //nolint:funlen
 			Usage:   "Git branch to use when cloning repository (used with --repo)",
 			EnvVars: []string{"BRANCH"},
 			Default: app.opt.Branch,
+		anthropicBaseURL = cmd.Flag[string]{
+			Names:   []string{"anthropic-base-url"},
+			Usage:   "Anthropic API base URL (overrides the default endpoint)",
+			EnvVars: []string{"ANTHROPIC_BASE_URL"},
+			Default: app.opt.Providers.Anthropic.BaseURL,
 		}
 	)
 
@@ -161,18 +198,24 @@ func NewApp(name string) *App { //nolint:funlen
 		&commitHistoryLength,
 		&enableEmoji,
 		&maxOutputTokens,
+		&retryAttempts,
+		&retryDelay,
 		&aiProviderName,
 		&geminiApiKey,
 		&geminiModelName,
+		&geminiBaseURL,
 		&openAIApiKey,
 		&openAIModelName,
+		&openAIBaseURL,
 		&openRouterApiKey,
 		&openRouterModelName,
+		&openRouterBaseURL,
 		&anthropicApiKey,
 		&anthropicModelName,
 		&commitHash,
 		&repoURL,
 		&branch,
+		&anthropicBaseURL,
 	}
 
 	app.cmd.Action = func(ctx context.Context, c *cmd.Command, args []string) error {
@@ -181,18 +224,24 @@ func NewApp(name string) *App { //nolint:funlen
 			setIfFlagIsSet(&app.opt.CommitHistoryLength, commitHistoryLength)
 			setIfFlagIsSet(&app.opt.EnableEmoji, enableEmoji)
 			setIfFlagIsSet(&app.opt.MaxOutputTokens, maxOutputTokens)
+			setIfFlagIsSet(&app.opt.MaxRetries, retryAttempts)
+			setIfFlagIsSet(&app.opt.RetryDelay, retryDelay)
 			setIfFlagIsSet(&app.opt.AIProviderName, aiProviderName)
 			setIfFlagIsSet(&app.opt.Providers.Gemini.ApiKey, geminiApiKey)
 			setIfFlagIsSet(&app.opt.Providers.Gemini.ModelName, geminiModelName)
+			setIfFlagIsSet(&app.opt.Providers.Gemini.BaseURL, geminiBaseURL)
 			setIfFlagIsSet(&app.opt.Providers.OpenAI.ApiKey, openAIApiKey)
 			setIfFlagIsSet(&app.opt.Providers.OpenAI.ModelName, openAIModelName)
+			setIfFlagIsSet(&app.opt.Providers.OpenAI.BaseURL, openAIBaseURL)
 			setIfFlagIsSet(&app.opt.Providers.OpenRouter.ApiKey, openRouterApiKey)
 			setIfFlagIsSet(&app.opt.Providers.OpenRouter.ModelName, openRouterModelName)
+			setIfFlagIsSet(&app.opt.Providers.OpenRouter.BaseURL, openRouterBaseURL)
 			setIfFlagIsSet(&app.opt.Providers.Anthropic.ApiKey, anthropicApiKey)
 			setIfFlagIsSet(&app.opt.Providers.Anthropic.ModelName, anthropicModelName)
 			setIfFlagIsSet(&app.opt.CommitHash, commitHash)
 			setIfFlagIsSet(&app.opt.RepoURL, repoURL)
 			setIfFlagIsSet(&app.opt.Branch, branch)
+			setIfFlagIsSet(&app.opt.Providers.Anthropic.BaseURL, anthropicBaseURL)
 		}
 
 		wd, err := app.loadOptions(ctx, *configFile.Value, args, applyFlags)
@@ -423,25 +472,29 @@ func (a *App) Help() string { return a.cmd.Help() }
 func providerFromOptions(opt options) (ai.Provider, error) {
 	switch opt.AIProviderName {
 	case ai.ProviderGemini:
-		return ai.NewGemini(
-			opt.Providers.Gemini.ApiKey,
-			opt.Providers.Gemini.ModelName,
-		), nil
+		provider = ai.NewGemini(
+			a.opt.Providers.Gemini.ApiKey,
+			a.opt.Providers.Gemini.ModelName,
+			ai.WithGeminiBaseURL(a.opt.Providers.Gemini.BaseURL),
+		)
 	case ai.ProviderOpenAI:
-		return ai.NewOpenAI(
-			opt.Providers.OpenAI.ApiKey,
-			opt.Providers.OpenAI.ModelName,
-		), nil
+		provider = ai.NewOpenAI(
+			a.opt.Providers.OpenAI.ApiKey,
+			a.opt.Providers.OpenAI.ModelName,
+			ai.WithOpenAIBaseURL(a.opt.Providers.OpenAI.BaseURL),
+		)
 	case ai.ProviderOpenRouter:
-		return ai.NewOpenRouter(
-			opt.Providers.OpenRouter.ApiKey,
-			opt.Providers.OpenRouter.ModelName,
-		), nil
+		provider = ai.NewOpenRouter(
+			a.opt.Providers.OpenRouter.ApiKey,
+			a.opt.Providers.OpenRouter.ModelName,
+			ai.WithOpenRouterBaseURL(a.opt.Providers.OpenRouter.BaseURL),
+		)
 	case ai.ProviderAnthropic:
-		return ai.NewAnthropic(
-			opt.Providers.Anthropic.ApiKey,
-			opt.Providers.Anthropic.ModelName,
-		), nil
+		provider = ai.NewAnthropic(
+			a.opt.Providers.Anthropic.ApiKey,
+			a.opt.Providers.Anthropic.ModelName,
+			ai.WithAnthropicBaseURL(a.opt.Providers.Anthropic.BaseURL),
+		)
 	default:
 		return nil, fmt.Errorf("unsupported AI provider: %s", opt.AIProviderName)
 	}
@@ -527,16 +580,36 @@ func (a *App) run(ctx context.Context, workingDir string, commitHash string) err
 		return fmt.Errorf("no changes found in %s (probably nothing staged; try `git add -A`)", workingDir)
 	}
 
-	response, respErr := provider.Query(
-		ctx,
-		changes,
-		commits,
-		ai.WithShortMessageOnly(a.opt.ShortMessageOnly),
-		ai.WithEmoji(a.opt.EnableEmoji),
-		ai.WithMaxOutputTokens(a.opt.MaxOutputTokens),
-	)
-	if respErr != nil {
-		return respErr
+	var response *ai.Response
+
+	if retryErr := retry.Do(ctx, func(ctx context.Context, attempt uint) (bool, error) {
+		if attempt > 0 {
+			debug.Printf("retrying after error (attempt %d of %d)", attempt, a.opt.MaxRetries)
+		}
+
+		var queryErr error
+
+		response, queryErr = provider.Query(ctx, changes, commits,
+			ai.WithShortMessageOnly(a.opt.ShortMessageOnly),
+			ai.WithEmoji(a.opt.EnableEmoji),
+			ai.WithMaxOutputTokens(a.opt.MaxOutputTokens),
+		)
+		if queryErr == nil {
+			return false, nil
+		}
+
+		return !ai.IsRetryableError(queryErr), queryErr
+	},
+		retry.WithMaxAttempts(func() uint {
+			if a.opt.MaxRetries == 0 {
+				return 0 // unlimited
+			}
+
+			return a.opt.MaxRetries + 1
+		}()),
+		retry.WithDelay(a.opt.RetryDelay),
+	); retryErr != nil {
+		return retryErr
 	}
 
 	debug.Printf("prompt:\n%s", response.Prompt)

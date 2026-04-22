@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"gh.tarampamp.am/describe-commit/internal/ai"
 	"gh.tarampamp.am/describe-commit/internal/config"
@@ -16,30 +17,38 @@ type options struct {
 	CommitHistoryLength int64
 	EnableEmoji         bool
 	MaxOutputTokens     int64
+	MaxRetries          uint
+	RetryDelay          time.Duration
 	AIProviderName      string
 	CommitHash          string
 	RepoURL             string
 	Branch              string
 
 	Providers struct {
-		Gemini     struct{ ApiKey, ModelName string }
-		OpenAI     struct{ ApiKey, ModelName string }
-		OpenRouter struct{ ApiKey, ModelName string }
-		Anthropic  struct{ ApiKey, ModelName string }
+		Gemini     struct{ ApiKey, ModelName, BaseURL string }
+		OpenAI     struct{ ApiKey, ModelName, BaseURL string }
+		OpenRouter struct{ ApiKey, ModelName, BaseURL string }
+		Anthropic  struct{ ApiKey, ModelName, BaseURL string }
 	}
 }
 
 func newOptionsWithDefaults() options {
 	var opt = options{
-		CommitHistoryLength: 20,                //nolint:mnd
-		MaxOutputTokens:     500,               //nolint:mnd
+		CommitHistoryLength: 20,  //nolint:mnd
+		MaxOutputTokens:     500, //nolint:mnd
+		MaxRetries:          5,   //nolint:mnd
+		RetryDelay:          time.Second,
 		AIProviderName:      ai.ProviderGemini, // due to its free
 	}
 
-	opt.Providers.Gemini.ModelName = "gemini-2.0-flash"
-	opt.Providers.OpenAI.ModelName = "gpt-4o-mini"
-	opt.Providers.OpenRouter.ModelName = "nvidia/llama-3.1-nemotron-70b-instruct:free"
-	opt.Providers.Anthropic.ModelName = "claude-3-7-sonnet-20250219"
+	// https://ai.google.dev/gemini-api/docs/models
+	opt.Providers.Gemini.ModelName = "gemini-2.5-flash"
+	// https://developers.openai.com/api/docs/models
+	opt.Providers.OpenAI.ModelName = "gpt-4.1-nano"
+	// https://openrouter.ai/api/v1/models
+	opt.Providers.OpenRouter.ModelName = "google/gemma-4-31b-it:free"
+	// https://platform.claude.com/docs/en/about-claude/models/overview
+	opt.Providers.Anthropic.ModelName = "claude-haiku-4-5-20251001"
 
 	return opt
 }
@@ -73,29 +82,43 @@ func (o *options) UpdateFromConfigFile(filePath []string) error {
 	setIfSourceNotNil(&o.CommitHistoryLength, cfg.CommitHistoryLength)
 	setIfSourceNotNil(&o.EnableEmoji, cfg.EnableEmoji)
 	setIfSourceNotNil(&o.MaxOutputTokens, cfg.MaxOutputTokens)
+	setIfSourceNotNil(&o.MaxRetries, cfg.MaxRetries)
 	setIfSourceNotNil(&o.AIProviderName, cfg.AIProviderName)
 	setIfSourceNotNil(&o.CommitHash, cfg.CommitHash)
 	setIfSourceNotNil(&o.RepoURL, cfg.RepoURL)
 	setIfSourceNotNil(&o.Branch, cfg.Branch)
 
+	if d := cfg.RetryDelay; d != nil && *d != "" {
+		dur, parseErr := time.ParseDuration(*d)
+		if parseErr != nil {
+			return fmt.Errorf("invalid retryDelay value %q: %w", *d, parseErr)
+		}
+
+		o.RetryDelay = dur
+	}
+
 	if sub := cfg.Gemini; sub != nil {
 		setIfSourceNotNil(&o.Providers.Gemini.ApiKey, sub.ApiKey)
 		setIfSourceNotNil(&o.Providers.Gemini.ModelName, sub.ModelName)
+		setIfSourceNotNil(&o.Providers.Gemini.BaseURL, sub.BaseURL)
 	}
 
 	if sub := cfg.OpenAI; sub != nil {
 		setIfSourceNotNil(&o.Providers.OpenAI.ApiKey, sub.ApiKey)
 		setIfSourceNotNil(&o.Providers.OpenAI.ModelName, sub.ModelName)
+		setIfSourceNotNil(&o.Providers.OpenAI.BaseURL, sub.BaseURL)
 	}
 
 	if sub := cfg.OpenRouter; sub != nil {
 		setIfSourceNotNil(&o.Providers.OpenRouter.ApiKey, sub.ApiKey)
 		setIfSourceNotNil(&o.Providers.OpenRouter.ModelName, sub.ModelName)
+		setIfSourceNotNil(&o.Providers.OpenRouter.BaseURL, sub.BaseURL)
 	}
 
 	if sub := cfg.Anthropic; sub != nil {
 		setIfSourceNotNil(&o.Providers.Anthropic.ApiKey, sub.ApiKey)
 		setIfSourceNotNil(&o.Providers.Anthropic.ModelName, sub.ModelName)
+		setIfSourceNotNil(&o.Providers.Anthropic.BaseURL, sub.BaseURL)
 	}
 
 	return nil

@@ -37,6 +37,8 @@ Without any manual effort (there's no time to write commit messages, lazy develo
 - Can generate short commit messages (subject line only)
 - Optionally includes emojis (🐛✨📝🚀✅♻️⬆️🔧🌐💡) in commit messages
 - Takes the commit history into account for better context
+- Supports custom API base URLs - connect to self-hosted or OpenAI-compatible endpoints
+  (e.g., [Ollama](https://ollama.com/), [LM Studio](https://lmstudio.ai/))
 - Runs as a standalone binary (only installed `git` is required)
 - Available for **Linux**, **macOS**, **Windows**, and as a **Docker image**
 
@@ -217,7 +219,7 @@ available options.
 You can specify the configuration file's location using the `--config-file` option. By default, however, the
 tool searches for the file in the user's configuration directory:
 
-- **Linux**: `~/.configs/describe-commit.yml`
+- **Linux**: `~/.config/describe-commit.yml`
 - **Windows**: `%APPDATA%\describe-commit.yml`
 - **macOS**: `~/Library/Application Support/describe-commit.yml`
 
@@ -229,7 +231,7 @@ Configuration options are applied in the following order, from highest to lowest
 2. Environment variables (e.g., `GEMINI_API_KEY`, `OPENAI_MODEL_NAME`, etc.)
 3. A configuration file in the working directory or any parent directory, up to the root (the file can be
    named `.describe-commit.yml` or `describe-commit.yml`)
-4. A configuration file in the user's configuration directory (e.g., `~/.configs/describe-commit.yml` for Linux)
+4. A configuration file in the user's configuration directory (e.g., `~/.config/describe-commit.yml` for Linux)
 
 This means you can store API tokens and other default settings in the global user's configuration file and override
 them with command-line options or a configuration file in the working directory when needed (e.g., enabling emojis
@@ -327,6 +329,29 @@ describe-commit --ai gemini --gemini-api-key "your-gemini-api-key"
 </details>
 
 <details>
+  <summary><strong>☝ Use a local model via Ollama (or any OpenAI-compatible endpoint)</strong></summary>
+
+Any provider that speaks the OpenAI chat-completions API (Ollama, LM Studio, vLLM, etc.) can be used by pointing
+the `--openai-base-url` flag at the local server and selecting the `openai` provider:
+
+```shell
+describe-commit \
+  --ai openai \
+  --openai-base-url "http://localhost:11434" \
+  --openai-model-name "llama3.2" \
+  --openai-api-key "ollama"
+```
+
+> The `--openai-api-key` value is ignored by Ollama but is required by the flag parser, so any non-empty
+> string works.
+
+The same `--<provider>-base-url` option is available for all four providers (`gemini`, `openai`, `openrouter`,
+`anthropic`), or you can set it via the corresponding environment variable (`OPENAI_BASE_URL`, `GEMINI_BASE_URL`,
+etc.) or through the `baseUrl` field in the [configuration file](describe-commit.example.yml).
+
+</details>
+
+<details>
   <summary><strong>☝ Generate a short commit message (only the first line) with emojis</strong></summary>
 
 ```shell
@@ -360,19 +385,41 @@ Options:
    --commit-history-length="…", --cl="…", --hl="…"  Number of previous commits from the Git history (0 = disabled) (default: 20) [$COMMIT_HISTORY_LENGTH]
    --enable-emoji, -e                               Enable emoji in the commit message [$ENABLE_EMOJI]
    --max-output-tokens="…"                          Maximum number of tokens in the output message (default: 500) [$MAX_OUTPUT_TOKENS]
+   --retry-attempts="…"                             Maximum number of retry attempts on retryable API errors (0 = unlimited retries) (default: 5) [$RETRY_ATTEMPTS]
+   --retry-delay="…"                                Delay between retry attempts (e.g. 1s, 500ms) (default: 1s) [$RETRY_DELAY]
    --ai-provider="…", --ai="…"                      AI provider name (gemini|openai|openrouter|anthropic) (default: gemini) [$AI_PROVIDER]
-   --gemini-api-key="…", --ga="…"                   Gemini API key (https://bit.ly/4jZhiKI, as of February 2025 it's free) [$GEMINI_API_KEY]
-   --gemini-model-name="…", --gm="…"                Gemini model name (https://bit.ly/4i02ARR) (default: gemini-2.0-flash) [$GEMINI_MODEL_NAME]
-   --openai-api-key="…", --oa="…"                   OpenAI API key (https://bit.ly/4i03NbR, you need to add funds to your account) [$OPENAI_API_KEY]
-   --openai-model-name="…", --om="…"                OpenAI model name (https://bit.ly/4hXCXkL) (default: gpt-4o-mini) [$OPENAI_MODEL_NAME]
-   --openrouter-api-key="…", --ora="…"              OpenRouter API key (https://bit.ly/4hU1yY1) [$OPENROUTER_API_KEY]
-   --openrouter-model-name="…", --orm="…"           OpenRouter model name (https://bit.ly/4ktktuG) (default: nvidia/llama-3.1-nemotron-70b-instruct:free) [$OPENROUTER_MODEL_NAME]
-   --anthropic-api-key="…", --ana="…"               Anthropic API key (https://bit.ly/4klw0Mw) [$ANTHROPIC_API_KEY]
-   --anthropic-model-name="…", --anm="…"            Anthropic model name (https://bit.ly/4bmQDDV) (default: claude-3-7-sonnet-20250219) [$ANTHROPIC_MODEL_NAME]
+   --gemini-api-key="…", --ga="…"                   Gemini API key (https://aistudio.google.com/app/api-keys, as of February 2025 it's free) [$GEMINI_API_KEY]
+   --gemini-model-name="…", --gm="…"                Gemini model name (https://ai.google.dev/gemini-api/docs/models) (default: gemini-2.5-flash) [$GEMINI_MODEL_NAME]
+   --gemini-base-url="…"                            Gemini API base URL (overrides the default endpoint) [$GEMINI_BASE_URL]
+   --openai-api-key="…", --oa="…"                   OpenAI API key (https://platform.openai.com/api-keys, you need to add funds to your account) [$OPENAI_API_KEY]
+   --openai-model-name="…", --om="…"                OpenAI model name (https://developers.openai.com/api/docs/models) (default: gpt-4.1-nano) [$OPENAI_MODEL_NAME]
+   --openai-base-url="…"                            OpenAI API base URL (use to connect to OpenAI-compatible endpoints, e.g. Ollama) [$OPENAI_BASE_URL]
+   --openrouter-api-key="…", --ora="…"              OpenRouter API key (https://openrouter.ai/workspaces/default/keys) [$OPENROUTER_API_KEY]
+   --openrouter-model-name="…", --orm="…"           OpenRouter model name (https://openrouter.ai/models) (default: google/gemma-4-31b-it:free) [$OPENROUTER_MODEL_NAME]
+   --openrouter-base-url="…"                        OpenRouter API base URL (overrides the default endpoint) [$OPENROUTER_BASE_URL]
+   --anthropic-api-key="…", --ana="…"               Anthropic API key (https://platform.claude.com/settings/keys) [$ANTHROPIC_API_KEY]
+   --anthropic-model-name="…", --anm="…"            Anthropic model name (https://platform.claude.com/docs/en/about-claude/models/overview) (default: claude-haiku-4-5-20251001) [$ANTHROPIC_MODEL_NAME]
+   --anthropic-base-url="…"                         Anthropic API base URL (overrides the default endpoint) [$ANTHROPIC_BASE_URL]
    --help, -h                                       Show help
    --version, -v                                    Print the version
 ```
 <!--/GENERATED:APP_README-->
+
+## 🧠 A note on AI-assisted development
+
+AI tools are great assistants - they can autocomplete, review, summarize, and help you move faster. But they’re not a
+substitute for understanding what's going on. If you're using AI to contribute here, please make sure you actually
+read, understand, and stand behind the changes you’re proposing.
+
+I personally write my code myself, and I encourage others to do the same. Not because AI is "bad", but because blindly
+trusting generated code tends to produce... let's say creative results.
+
+And honestly, I'm still waiting for the day "AI-free software" becomes a trend - like organic food, but for code 😄 
+Until then: trust, but verify.
+
+## 🤖 AI Agent Instructions
+
+See [AGENTS.md](AGENTS.md) for detailed guidelines for AI agents working with this repository.
 
 ## 📜 License
 

@@ -11,9 +11,12 @@ import (
 	"time"
 )
 
+const openAIDefaultBaseURL = "https://api.openai.com"
+
 type OpenAI struct {
 	httpClient        httpClient
 	apiKey, modelName string
+	baseURL           string
 }
 
 var _ Provider = (*OpenAI)(nil)
@@ -21,6 +24,7 @@ var _ Provider = (*OpenAI)(nil)
 type (
 	openaiOptions struct {
 		HttpClient httpClient
+		BaseURL    string
 	}
 
 	// OpenAIOption allows to customize the OpenAI provider.
@@ -32,8 +36,14 @@ func WithOpenAIHttpClient(c httpClient) OpenAIOption {
 	return func(o *openaiOptions) { o.HttpClient = c }
 }
 
+// WithOpenAIBaseURL overrides the default OpenAI API base URL.
+// Use this to point the provider at an OpenAI-compatible endpoint, e.g. a local Ollama instance.
+func WithOpenAIBaseURL(url string) OpenAIOption {
+	return func(o *openaiOptions) { o.BaseURL = url }
+}
+
 // NewOpenAI creates a new OpenAI provider.
-func NewOpenAI(apiKey, model string, opt ...OpenAIOption) *OpenAI {
+func NewOpenAI(apiKey, model string, opt ...OpenAIOption) *OpenAI { //nolint:dupl
 	var opts openaiOptions
 
 	for _, o := range opt {
@@ -53,10 +63,14 @@ func NewOpenAI(apiKey, model string, opt ...OpenAIOption) *OpenAI {
 		}
 	}
 
+	if opts.BaseURL != "" {
+		p.baseURL = strings.TrimRight(opts.BaseURL, "/")
+	}
+
 	return &p
 }
 
-func (p *OpenAI) Query( //nolint:dupl
+func (p *OpenAI) Query(
 	ctx context.Context,
 	changes, commits string,
 	opts ...Option,
@@ -141,10 +155,14 @@ func (p *OpenAI) newRequest(
 		return nil, jErr
 	}
 
-	// https://ai.google.dev/gemini-api/docs/text-generation?lang=rest
+	base := openAIDefaultBaseURL
+	if p.baseURL != "" {
+		base = p.baseURL
+	}
+
 	req, rErr := http.NewRequestWithContext(ctx,
 		http.MethodPost,
-		"https://api.openai.com/v1/chat/completions",
+		base+"/v1/chat/completions",
 		bytes.NewReader(j),
 	)
 	if rErr != nil {
@@ -159,23 +177,33 @@ func (p *OpenAI) newRequest(
 
 // responseToError converts the response from the OpenAI API to an error.
 func (p *OpenAI) responseToError(resp *http.Response) error {
-	var response struct {
+	// https://platform.openai.com/docs/guides/error-codes
+	var body struct {
 		Error struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err == nil && response.Error.Message != "" {
-		return fmt.Errorf(
-			"OpenAI API error: %s (status code: %d)",
-			response.Error.Message, resp.StatusCode,
-		)
+	retryable := resp.StatusCode == http.StatusTooManyRequests || // 429 - rate limit
+		resp.StatusCode == http.StatusInternalServerError || // 500
+		resp.StatusCode == http.StatusBadGateway || // 502
+		resp.StatusCode == http.StatusServiceUnavailable || // 503
+		resp.StatusCode == http.StatusGatewayTimeout // 504
+
+	var err error
+
+	if dErr := json.NewDecoder(resp.Body).Decode(&body); dErr == nil && body.Error.Message != "" {
+		err = fmt.Errorf("OpenAI API error: %s (status code: %d)", body.Error.Message, resp.StatusCode)
+	} else {
+		err = fmt.Errorf("unexpected OpenAI API response status code: %d (%s)",
+			resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
-	return fmt.Errorf(
-		"unexpected OpenAI API response status code: %d (%s)",
-		resp.StatusCode, http.StatusText(resp.StatusCode),
-	)
+	if retryable {
+		return newRetryableError(err)
+	}
+
+	return err
 }
 
 // parseResponse parses the response from the OpenAI API.

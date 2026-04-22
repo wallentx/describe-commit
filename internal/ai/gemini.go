@@ -11,10 +11,13 @@ import (
 	"time"
 )
 
+const geminiDefaultBaseURL = "https://generativelanguage.googleapis.com"
+
 // Gemini is a provider for the Gemini API.
 type Gemini struct {
 	httpClient        httpClient
 	apiKey, modelName string
+	baseURL           string
 }
 
 var _ Provider = (*Gemini)(nil) // ensure the interface is implemented
@@ -22,6 +25,7 @@ var _ Provider = (*Gemini)(nil) // ensure the interface is implemented
 type (
 	geminiOptions struct {
 		HttpClient httpClient
+		BaseURL    string
 	}
 
 	// GeminiOption allows to customize the Gemini provider.
@@ -33,8 +37,14 @@ func WithGeminiHttpClient(c httpClient) GeminiOption {
 	return func(o *geminiOptions) { o.HttpClient = c }
 }
 
+// WithGeminiBaseURL overrides the default Gemini API base URL.
+// Use this to point the provider at a Gemini-compatible endpoint or proxy.
+func WithGeminiBaseURL(url string) GeminiOption {
+	return func(o *geminiOptions) { o.BaseURL = url }
+}
+
 // NewGemini creates a new Gemini provider.
-func NewGemini(apiKey, model string, opt ...GeminiOption) *Gemini {
+func NewGemini(apiKey, model string, opt ...GeminiOption) *Gemini { //nolint:dupl
 	var opts geminiOptions
 
 	for _, o := range opt {
@@ -54,10 +64,14 @@ func NewGemini(apiKey, model string, opt ...GeminiOption) *Gemini {
 		}
 	}
 
+	if opts.BaseURL != "" {
+		p.baseURL = strings.TrimRight(opts.BaseURL, "/")
+	}
+
 	return &p
 }
 
-func (p *Gemini) Query( //nolint:dupl
+func (p *Gemini) Query(
 	ctx context.Context,
 	changes, commits string,
 	opts ...Option,
@@ -170,9 +184,14 @@ func (p *Gemini) newRequest( //nolint:funlen
 		return nil, jErr
 	}
 
+	base := geminiDefaultBaseURL
+	if p.baseURL != "" {
+		base = p.baseURL
+	}
+
 	// https://ai.google.dev/gemini-api/docs/text-generation?lang=rest
 	req, rErr := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent",
+		base+"/v1beta/models/%s:generateContent",
 		p.modelName,
 	), bytes.NewReader(j))
 	if rErr != nil {
@@ -189,23 +208,40 @@ func (p *Gemini) newRequest( //nolint:funlen
 
 // responseToError converts the response from the Gemini API to an error.
 func (p *Gemini) responseToError(resp *http.Response) error {
-	var response struct {
+	// https://ai.google.dev/gemini-api/docs/troubleshooting
+	// https://cloud.google.com/apis/design/errors (gRPC status codes mapped to HTTP)
+	var body struct {
 		Error struct {
 			Message string `json:"message"`
+			Status  string `json:"status"` // gRPC status name, e.g. "RESOURCE_EXHAUSTED"
 		} `json:"error"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err == nil && response.Error.Message != "" {
-		return fmt.Errorf(
-			"gemini API error: %s (status code: %d)",
-			response.Error.Message, resp.StatusCode,
-		)
+	retryable := resp.StatusCode == http.StatusTooManyRequests || // 429 - quota exceeded (RESOURCE_EXHAUSTED)
+		resp.StatusCode == http.StatusInternalServerError || // 500
+		resp.StatusCode == http.StatusBadGateway || // 502
+		resp.StatusCode == http.StatusServiceUnavailable || // 503 - transient (UNAVAILABLE)
+		resp.StatusCode == http.StatusGatewayTimeout // 504
+
+	var err error
+
+	if dErr := json.NewDecoder(resp.Body).Decode(&body); dErr == nil && body.Error.Message != "" {
+		err = fmt.Errorf("Gemini API error: %s (status code: %d)", body.Error.Message, resp.StatusCode)
+
+		// guard against edge cases where the gRPC status arrives with an unexpected HTTP code
+		if body.Error.Status == "RESOURCE_EXHAUSTED" || body.Error.Status == "UNAVAILABLE" {
+			retryable = true
+		}
+	} else {
+		err = fmt.Errorf("unexpected Gemini API response status code: %d (%s)",
+			resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
-	return fmt.Errorf(
-		"unexpected Gemini API response status code: %d (%s)",
-		resp.StatusCode, http.StatusText(resp.StatusCode),
-	)
+	if retryable {
+		return newRetryableError(err)
+	}
+
+	return err
 }
 
 // parseResponse parses the response from the Gemini API.
